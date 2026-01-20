@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Layout from './components/Layout';
+import Layout from './components/MainLayout';
 import Dashboard from './pages/Dashboard';
 
 // Placeholder pages for now (we will build these next)
