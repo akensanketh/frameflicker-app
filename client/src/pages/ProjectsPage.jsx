@@ -24,6 +24,7 @@ export default function ProjectsPage() {
 
   const fetchData = async () => {
     try {
+      console.log("Fetching data...");
       const [pRes, cRes, pkRes] = await Promise.all([
         axios.get('/api/projects'),
         axios.get('/api/clients'),
@@ -32,21 +33,57 @@ export default function ProjectsPage() {
       setProjects(pRes.data);
       setClients(cRes.data);
       setPackages(pkRes.data);
-    } catch (error) { console.error("Error loading data"); }
+      console.log("Data loaded:", { clients: cRes.data.length, packages: pkRes.data.length });
+    } catch (error) { 
+      console.error("Error loading data", error);
+      alert("Error loading data from server. Check console."); 
+    }
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e.preventDefault(); // Stop page reload
+    
+    // DEBUG LOGGING
+    console.log("Attempting to save:", formData);
+
+    // Manual Validation
+    if (!formData.clientId) {
+      alert("⚠️ Please select a Client!");
+      return;
+    }
+    if (!formData.packageId) {
+      alert("⚠️ Please select a Package!");
+      return;
+    }
+
     try {
-      await axios.post('/api/projects', formData);
+      const response = await axios.post('/api/projects', formData);
+      console.log("Server Response:", response.data);
+      alert("✅ Booking Created Successfully!");
+      
       setShowForm(false);
+      setFormData({
+        clientId: '',
+        packageId: '',
+        eventDate: '',
+        eventTime: '',
+        location: '',
+        notes: ''
+      });
       fetchData(); // Reload list
-    } catch (error) { alert("Error creating booking. Make sure Client and Package are selected."); }
+    } catch (error) { 
+      console.error("Save failed:", error);
+      alert("❌ Save Failed: " + (error.response?.data?.error || error.message)); 
+    }
   };
 
   const updateStatus = async (id, newStatus) => {
-    await axios.patch(`/api/projects/${id}/status`, { status: newStatus });
-    fetchData();
+    try {
+      await axios.patch(`/api/projects/${id}/status`, { status: newStatus });
+      fetchData();
+    } catch (error) {
+      console.error("Status update failed");
+    }
   };
 
   // Status Badge Colors
@@ -78,30 +115,32 @@ export default function ProjectsPage() {
             
             {/* Client Select */}
             <div>
-              <label className="label">Select Client</label>
-              <select className="input" value={formData.clientId} onChange={e => setFormData({...formData, clientId: e.target.value})} required>
+              <label className="label">Select Client <span className="text-red-500">*</span></label>
+              <select className="input" value={formData.clientId} onChange={e => setFormData({...formData, clientId: e.target.value})}>
                 <option value="">-- Choose Client --</option>
                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              {clients.length === 0 && <p className="text-xs text-red-500 mt-1">No clients found! Go to Clients page first.</p>}
             </div>
 
             {/* Package Select */}
             <div>
-              <label className="label">Select Package</label>
-              <select className="input" value={formData.packageId} onChange={e => setFormData({...formData, packageId: e.target.value})} required>
+              <label className="label">Select Package <span className="text-red-500">*</span></label>
+              <select className="input" value={formData.packageId} onChange={e => setFormData({...formData, packageId: e.target.value})}>
                 <option value="">-- Choose Package --</option>
-                {packages.map(p => <option key={p.id} value={p.id}>{p.name} (Rs. {p.price})</option>)}
+                {packages.map(p => <option key={p.id} value={p.id}>{p.name} (Rs. {Number(p.price).toLocaleString()})</option>)}
               </select>
+              {packages.length === 0 && <p className="text-xs text-red-500 mt-1">No packages found! Go to Packages page first.</p>}
             </div>
 
-            <input type="date" className="input" value={formData.eventDate} onChange={e => setFormData({...formData, eventDate: e.target.value})} required />
+            <input type="date" className="input" value={formData.eventDate} onChange={e => setFormData({...formData, eventDate: e.target.value})} />
             <input type="time" className="input" value={formData.eventTime} onChange={e => setFormData({...formData, eventTime: e.target.value})} />
             <input className="input" placeholder="Location" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} />
             <input className="input" placeholder="Notes (e.g. Drone needed)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} />
 
             <div className="md:col-span-2 flex justify-end gap-2 mt-2">
               <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
-              <button type="submit" className="btn btn-primary">Create Booking</button>
+              <button type="button" onClick={handleSubmit} className="btn btn-primary">Create Booking</button>
             </div>
           </form>
         </div>
