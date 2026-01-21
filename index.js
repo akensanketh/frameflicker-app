@@ -1,449 +1,327 @@
-const express = require("express");
-const cors = require("cors");
-const morgan = require("morgan");
-const path = require("path");
-const Database = require("better-sqlite3");
+// server/index.js
+require('dotenv').config();
 
-// ============ DATABASE SETUP ============
-const dbPath = path.join(__dirname, "frameflicker.sqlite");
-const db = new Database(dbPath);
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const sheets = require('./sheets');
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    phone TEXT,
-    email TEXT,
-    address TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+// ===========================================
+// 🔐 Environment Validation
+// ===========================================
 
-  CREATE TABLE IF NOT EXISTS packages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    category TEXT,
-    price REAL NOT NULL,
-    hours TEXT,
-    deliverables TEXT,
-    description TEXT
-  );
+console.log('🔍 Environment Check:');
+console.log('   SPREADSHEET_ID exists:', !!process.env.SPREADSHEET_ID);
+console.log('   GOOGLE_CREDENTIALS exists:', !!process.env.GOOGLE_CREDENTIALS);
 
-  CREATE TABLE IF NOT EXISTS projects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    client_id INTEGER NOT NULL,
-    package_id INTEGER NOT NULL,
-    event_type TEXT,
-    event_date TEXT,
-    event_time TEXT,
-    location TEXT,
-    status TEXT DEFAULT 'New',
-    price REAL NOT NULL,
-    deposit_percent REAL NOT NULL,
-    deposit_amount REAL NOT NULL,
-    balance_amount REAL NOT NULL,
-    amount_paid REAL DEFAULT 0,
-    drive_link TEXT,
-    internal_path TEXT,
-    revision_limit INTEGER DEFAULT 2,
-    revisions_used INTEGER DEFAULT 0,
-    crew_assigned TEXT,
-    notes TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    method TEXT NOT NULL,
-    reference TEXT,
-    note TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS team (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    role TEXT,
-    phone TEXT,
-    email TEXT
-  );
-`);
-
-console.log("Database ready!");
-
-// ============ EXPRESS APP ============
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(morgan("dev"));
-
-// ============ DEPOSIT CALCULATION ============
-// Your rule: <= 15000 LKR = 50% deposit, > 15000 LKR = 25% deposit
-function calcDeposit(price) {
-  const percent = price <= 15000 ? 0.5 : 0.25;
-  const depositAmount = Math.round(price * percent);
-  const balanceAmount = price - depositAmount;
-  return { percent, depositAmount, balanceAmount };
+if (!process.env.SPREADSHEET_ID) {
+  console.error('❌ FATAL: SPREADSHEET_ID is not set!');
+  process.exit(1);
 }
 
-// ============ API ROUTES ============
+if (!process.env.GOOGLE_CREDENTIALS) {
+  console.error('❌ FATAL: GOOGLE_CREDENTIALS is not set!');
+  process.exit(1);
+}
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "FrameFlicker Studios API is running!",
-    location: "Sri Lanka",
-    currency: "LKR"
-  });
+// ===========================================
+// 🚀 Express Setup
+// ===========================================
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(morgan('dev'));
+
+// ===========================================
+// 📡 API Routes
+// ===========================================
+
+// Health Check
+app.get('/api/health', async (req, res) => {
+  try {
+    const clients = await sheets.getAllClients();
+    res.json({
+      status: 'healthy',
+      service: 'FrameFlicker Studios API',
+      database: 'Google Sheets',
+      clientCount: clients.length,
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: err.message,
+    });
+  }
 });
 
-// ============ CLIENTS ============
-app.get("/api/clients", (req, res) => {
-  const clients = db.prepare("SELECT * FROM clients ORDER BY id DESC").all();
-  res.json(clients);
+// -----------------------------
+// 👥 CLIENTS
+// -----------------------------
+
+app.get('/api/clients', async (req, res) => {
+  try {
+    const clients = await sheets.getAllClients();
+    res.json(clients);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch clients' });
+  }
 });
 
-app.get("/api/clients/:id", (req, res) => {
-  const client = db.prepare("SELECT * FROM clients WHERE id = ?").get(req.params.id);
-  if (!client) return res.status(404).json({ error: "Client not found" });
-  res.json(client);
+app.get('/api/clients/:id', async (req, res) => {
+  try {
+    const client = await sheets.getClientById(req.params.id);
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    res.json(client);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch client' });
+  }
 });
 
-app.post("/api/clients", (req, res) => {
-  const { name, phone, email, address } = req.body;
-  if (!name) return res.status(400).json({ error: "Name is required" });
-
-  const stmt = db.prepare("INSERT INTO clients (name, phone, email, address) VALUES (?, ?, ?, ?)");
-  const result = stmt.run(name, phone || "", email || "", address || "");
-  res.json({ id: result.lastInsertRowid, name, phone, email, address, message: "Client added!" });
+app.post('/api/clients', async (req, res) => {
+  try {
+    if (!req.body.name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    const client = await sheets.createClient(req.body);
+    res.status(201).json(client);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to create client' });
+  }
 });
 
-app.put("/api/clients/:id", (req, res) => {
-  const { name, phone, email, address } = req.body;
-  db.prepare("UPDATE clients SET name=?, phone=?, email=?, address=? WHERE id=?")
-    .run(name, phone || "", email || "", address || "", req.params.id);
-  res.json({ success: true, message: "Client updated!" });
+app.put('/api/clients/:id', async (req, res) => {
+  try {
+    const client = await sheets.updateClient(req.params.id, req.body);
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    res.json(client);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to update client' });
+  }
 });
 
-app.delete("/api/clients/:id", (req, res) => {
-  db.prepare("DELETE FROM clients WHERE id = ?").run(req.params.id);
-  res.json({ success: true, message: "Client deleted!" });
+app.delete('/api/clients/:id', async (req, res) => {
+  try {
+    const deleted = await sheets.deleteClient(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    res.json({ message: 'Client deleted successfully' });
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to delete client' });
+  }
 });
 
-// ============ PACKAGES ============
-app.get("/api/packages", (req, res) => {
-  const packages = db.prepare("SELECT * FROM packages ORDER BY price ASC").all();
-  res.json(packages);
+// -----------------------------
+// 📦 PACKAGES
+// -----------------------------
+
+app.get('/api/packages', async (req, res) => {
+  try {
+    const packages = await sheets.getAllPackages();
+    res.json(packages);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch packages' });
+  }
 });
 
-app.get("/api/packages/:id", (req, res) => {
-  const pkg = db.prepare("SELECT * FROM packages WHERE id = ?").get(req.params.id);
-  if (!pkg) return res.status(404).json({ error: "Package not found" });
-  res.json(pkg);
+app.get('/api/packages/:id', async (req, res) => {
+  try {
+    const pkg = await sheets.getPackageById(req.params.id);
+    if (!pkg) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+    res.json(pkg);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch package' });
+  }
 });
 
-app.post("/api/packages", (req, res) => {
-  const { name, category, price, hours, deliverables, description } = req.body;
-  if (!name || price == null) return res.status(400).json({ error: "Name and price required" });
+app.post('/api/packages', async (req, res) => {
+  try {
+    if (!req.body.name || req.body.price === undefined) {
+      return res.status(400).json({ error: 'Name and price are required' });
+    }
+    const pkg = await sheets.createPackage(req.body);
+    res.status(201).json(pkg);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to create package' });
+  }
+});
 
-  const stmt = db.prepare("INSERT INTO packages (name, category, price, hours, deliverables, description) VALUES (?, ?, ?, ?, ?, ?)");
-  const result = stmt.run(name, category || "", Number(price), hours || "", deliverables || "", description || "");
+app.put('/api/packages/:id', async (req, res) => {
+  try {
+    const pkg = await sheets.updatePackage(req.params.id, req.body);
+    if (!pkg) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+    res.json(pkg);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to update package' });
+  }
+});
+
+app.delete('/api/packages/:id', async (req, res) => {
+  try {
+    const deleted = await sheets.deletePackage(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+    res.json({ message: 'Package deleted successfully' });
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to delete package' });
+  }
+});
+
+// -----------------------------
+// 📁 PROJECTS
+// -----------------------------
+
+app.get('/api/projects', async (req, res) => {
+  try {
+    const projects = await sheets.getAllProjects();
+    res.json(projects);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch projects' });
+  }
+});
+
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const project = await sheets.getProjectById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.json(project);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch project' });
+  }
+});
+
+app.post('/api/projects', async (req, res) => {
+  try {
+    const project = await sheets.createProject(req.body);
+    res.status(201).json(project);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to create project' });
+  }
+});
+
+app.put('/api/projects/:id', async (req, res) => {
+  try {
+    const project = await sheets.updateProject(req.params.id, req.body);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.json(project);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+});
+
+app.delete('/api/projects/:id', async (req, res) => {
+  try {
+    const deleted = await sheets.deleteProject(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.json({ message: 'Project deleted successfully' });
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to delete project' });
+  }
+});
+
+// -----------------------------
+// 💰 PAYMENTS
+// -----------------------------
+
+app.get('/api/payments', async (req, res) => {
+  try {
+    const payments = await sheets.getAllPayments(req.query.project_id);
+    res.json(payments);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to fetch payments' });
+  }
+});
+
+app.post('/api/payments', async (req, res) => {
+  try {
+    if (!req.body.project_id || !req.body.amount || !req.body.method) {
+      return res.status(400).json({ error: 'project_id, amount, and method are required' });
+    }
+    const payment = await sheets.createPayment(req.body);
+    res.status(201).json(payment);
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to create payment' });
+  }
+});
+
+app.delete('/api/payments/:id', async (req, res) => {
+  try {
+    const deleted = await sheets.deletePayment(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    res.json({ message: 'Payment deleted successfully' });
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Failed to delete payment' });
+  }
+});
+
+// ===========================================
+// 🚨 Error Handling
+// ===========================================
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// ===========================================
+// 🎬 Start Server
+// ===========================================
+
+const PORT = process.env.PORT || 5000;
+
+async function startServer() {
+  const connected = await sheets.initSheets();
   
-  const { percent, depositAmount, balanceAmount } = calcDeposit(Number(price));
+  if (!connected) {
+    console.error('⚠️ Starting with Google Sheets issues');
+  }
   
-  res.json({ 
-    id: result.lastInsertRowid, 
-    name, 
-    category, 
-    price: Number(price),
-    depositPercent: percent * 100 + "%",
-    depositAmount,
-    message: "Package added!" 
+  app.listen(PORT, () => {
+    console.log(`🚀 FrameFlicker Studios API running on port ${PORT}`);
+    console.log(`📊 Using Google Sheets as database`);
+    console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
   });
-});
+}
 
-app.put("/api/packages/:id", (req, res) => {
-  const { name, category, price, hours, deliverables, description } = req.body;
-  db.prepare("UPDATE packages SET name=?, category=?, price=?, hours=?, deliverables=?, description=? WHERE id=?")
-    .run(name, category || "", Number(price), hours || "", deliverables || "", description || "", req.params.id);
-  res.json({ success: true, message: "Package updated!" });
-});
-
-app.delete("/api/packages/:id", (req, res) => {
-  db.prepare("DELETE FROM packages WHERE id = ?").run(req.params.id);
-  res.json({ success: true, message: "Package deleted!" });
-});
-
-// ============ PROJECTS / BOOKINGS ============
-app.get("/api/projects", (req, res) => {
-  const projects = db.prepare(`
-    SELECT 
-      p.*,
-      c.name as client_name,
-      c.phone as client_phone,
-      c.email as client_email,
-      pk.name as package_name,
-      pk.category as package_category
-    FROM projects p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN packages pk ON pk.id = p.package_id
-    ORDER BY p.event_date DESC, p.id DESC
-  `).all();
-  res.json(projects);
-});
-
-app.get("/api/projects/:id", (req, res) => {
-  const project = db.prepare(`
-    SELECT 
-      p.*,
-      c.name as client_name,
-      c.phone as client_phone,
-      c.email as client_email,
-      pk.name as package_name
-    FROM projects p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN packages pk ON pk.id = p.package_id
-    WHERE p.id = ?
-  `).get(req.params.id);
-  if (!project) return res.status(404).json({ error: "Project not found" });
-  res.json(project);
-});
-
-app.post("/api/projects", (req, res) => {
-  const { 
-    clientId, packageId, eventType, eventDate, eventTime, 
-    location, price, driveLink, internalPath, crewAssigned, notes 
-  } = req.body;
-
-  if (!clientId || !packageId) {
-    return res.status(400).json({ error: "Client and Package are required" });
-  }
-
-  // Get package price if not provided
-  let finalPrice = price;
-  if (finalPrice == null) {
-    const pkg = db.prepare("SELECT price FROM packages WHERE id = ?").get(packageId);
-    if (pkg) finalPrice = pkg.price;
-    else return res.status(400).json({ error: "Package not found" });
-  }
-  finalPrice = Number(finalPrice);
-
-  const { percent, depositAmount, balanceAmount } = calcDeposit(finalPrice);
-
-  const stmt = db.prepare(`
-    INSERT INTO projects 
-    (client_id, package_id, event_type, event_date, event_time, location, status, 
-     price, deposit_percent, deposit_amount, balance_amount, 
-     drive_link, internal_path, crew_assigned, notes)
-    VALUES (?, ?, ?, ?, ?, ?, 'New', ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const result = stmt.run(
-    clientId, packageId, eventType || "", eventDate || "", eventTime || "", location || "",
-    finalPrice, percent, depositAmount, balanceAmount,
-    driveLink || "", internalPath || "", crewAssigned || "", notes || ""
-  );
-
-  res.json({
-    id: result.lastInsertRowid,
-    price: finalPrice,
-    depositPercent: percent * 100 + "%",
-    depositAmount,
-    balanceAmount,
-    message: "Project/Booking created!"
-  });
-});
-
-app.patch("/api/projects/:id/status", (req, res) => {
-  const { status } = req.body;
-  const validStatuses = [
-    "New", "Confirmed", "Deposit Paid", "Scheduled", 
-    "Shooting", "Editing", "Review", "Delivered", "Completed", "Cancelled"
-  ];
-  if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: "Invalid status", validStatuses });
-  }
-  db.prepare("UPDATE projects SET status = ? WHERE id = ?").run(status, req.params.id);
-  res.json({ success: true, status, message: "Status updated!" });
-});
-
-app.put("/api/projects/:id", (req, res) => {
-  const { 
-    eventType, eventDate, eventTime, location, 
-    driveLink, internalPath, crewAssigned, notes 
-  } = req.body;
-  
-  db.prepare(`
-    UPDATE projects SET 
-    event_type=?, event_date=?, event_time=?, location=?, 
-    drive_link=?, internal_path=?, crew_assigned=?, notes=? 
-    WHERE id=?
-  `).run(
-    eventType || "", eventDate || "", eventTime || "", location || "",
-    driveLink || "", internalPath || "", crewAssigned || "", notes || "",
-    req.params.id
-  );
-  res.json({ success: true, message: "Project updated!" });
-});
-
-app.delete("/api/projects/:id", (req, res) => {
-  db.prepare("DELETE FROM payments WHERE project_id = ?").run(req.params.id);
-  db.prepare("DELETE FROM projects WHERE id = ?").run(req.params.id);
-  res.json({ success: true, message: "Project deleted!" });
-});
-
-// ============ PAYMENTS ============
-app.get("/api/payments", (req, res) => {
-  const payments = db.prepare(`
-    SELECT pay.*, p.id as project_id, c.name as client_name
-    FROM payments pay
-    LEFT JOIN projects p ON p.id = pay.project_id
-    LEFT JOIN clients c ON c.id = p.client_id
-    ORDER BY pay.created_at DESC
-  `).all();
-  res.json(payments);
-});
-
-app.get("/api/payments/project/:projectId", (req, res) => {
-  const payments = db.prepare("SELECT * FROM payments WHERE project_id = ? ORDER BY id DESC").all(req.params.projectId);
-  const total = db.prepare("SELECT SUM(amount) as total FROM payments WHERE project_id = ?").get(req.params.projectId);
-  res.json({ payments, totalPaid: total.total || 0 });
-});
-
-app.post("/api/payments", (req, res) => {
-  const { projectId, amount, method, reference, note } = req.body;
-  if (!projectId || amount == null || !method) {
-    return res.status(400).json({ error: "projectId, amount, method required" });
-  }
-
-  const validMethods = ["Cash", "Bank Transfer", "Card", "Other"];
-  if (!validMethods.includes(method)) {
-    return res.status(400).json({ error: "Invalid method", validMethods });
-  }
-
-  const stmt = db.prepare("INSERT INTO payments (project_id, amount, method, reference, note) VALUES (?, ?, ?, ?, ?)");
-  const result = stmt.run(projectId, Number(amount), method, reference || "", note || "");
-
-  // Update amount_paid in project
-  db.prepare("UPDATE projects SET amount_paid = amount_paid + ? WHERE id = ?").run(Number(amount), projectId);
-
-  res.json({ 
-    id: result.lastInsertRowid, 
-    amount: Number(amount), 
-    method, 
-    message: "Payment recorded!" 
-  });
-});
-
-app.delete("/api/payments/:id", (req, res) => {
-  const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(req.params.id);
-  if (payment) {
-    db.prepare("UPDATE projects SET amount_paid = amount_paid - ? WHERE id = ?").run(payment.amount, payment.project_id);
-    db.prepare("DELETE FROM payments WHERE id = ?").run(req.params.id);
-  }
-  res.json({ success: true, message: "Payment deleted!" });
-});
-
-// ============ REVISIONS (Video: 2 included) ============
-app.post("/api/projects/:id/revision", (req, res) => {
-  const project = db.prepare("SELECT revision_limit, revisions_used FROM projects WHERE id = ?").get(req.params.id);
-  if (!project) return res.status(404).json({ error: "Project not found" });
-
-  const newCount = project.revisions_used + 1;
-  db.prepare("UPDATE projects SET revisions_used = ? WHERE id = ?").run(newCount, req.params.id);
-
-  const isExtra = newCount > project.revision_limit;
-  res.json({
-    revisionsUsed: newCount,
-    revisionLimit: project.revision_limit,
-    extraRevision: isExtra,
-    message: isExtra ? "⚠️ Extra revision! Consider charging extra." : "Revision recorded."
-  });
-});
-
-app.post("/api/projects/:id/reset-revisions", (req, res) => {
-  db.prepare("UPDATE projects SET revisions_used = 0 WHERE id = ?").run(req.params.id);
-  res.json({ success: true, message: "Revisions reset to 0" });
-});
-
-// ============ TEAM ============
-app.get("/api/team", (req, res) => {
-  const team = db.prepare("SELECT * FROM team ORDER BY name ASC").all();
-  res.json(team);
-});
-
-app.post("/api/team", (req, res) => {
-  const { name, role, phone, email } = req.body;
-  if (!name) return res.status(400).json({ error: "Name required" });
-
-  const stmt = db.prepare("INSERT INTO team (name, role, phone, email) VALUES (?, ?, ?, ?)");
-  const result = stmt.run(name, role || "", phone || "", email || "");
-  res.json({ id: result.lastInsertRowid, name, role, message: "Team member added!" });
-});
-
-app.delete("/api/team/:id", (req, res) => {
-  db.prepare("DELETE FROM team WHERE id = ?").run(req.params.id);
-  res.json({ success: true, message: "Team member deleted!" });
-});
-
-// ============ DASHBOARD STATS ============
-app.get("/api/dashboard", (req, res) => {
-  const totalClients = db.prepare("SELECT COUNT(*) as count FROM clients").get().count;
-  const totalProjects = db.prepare("SELECT COUNT(*) as count FROM projects").get().count;
-  const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM payments").get().total || 0;
-  const pendingPayments = db.prepare(`
-    SELECT SUM(balance_amount - amount_paid) as pending 
-    FROM projects 
-    WHERE status != 'Cancelled' AND status != 'Completed'
-  `).get().pending || 0;
-
-  const recentProjects = db.prepare(`
-    SELECT p.*, c.name as client_name, pk.name as package_name
-    FROM projects p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN packages pk ON pk.id = p.package_id
-    ORDER BY p.id DESC LIMIT 5
-  `).all();
-
-  const projectsByStatus = db.prepare(`
-    SELECT status, COUNT(*) as count FROM projects GROUP BY status
-  `).all();
-
-  res.json({
-    totalClients,
-    totalProjects,
-    totalRevenue,
-    pendingPayments,
-    recentProjects,
-    projectsByStatus
-  });
-});
-
-// ============ START SERVER ============
-const PORT = 5000;
-app.listen(PORT, () => {
-  console.log("");
-  console.log("╔════════════════════════════════════════════════════════════╗");
-  console.log("║                                                            ║");
-  console.log("║     FrameFlicker Studios - Studio Management System        ║");
-  console.log("║                                                            ║");
-  console.log("║     API Server Running!                                    ║");
-  console.log("║     URL: http://localhost:" + PORT + "                            ║");
-  console.log("║                                                            ║");
-  console.log("║     Location: Sri Lanka                                    ║");
-  console.log("║     Currency: LKR                                          ║");
-  console.log("║                                                            ║");
-  console.log("╚════════════════════════════════════════════════════════════╝");
-  console.log("");
-  console.log("API Endpoints:");
-  console.log("  GET  /api/health          - Check if server is running");
-  console.log("  GET  /api/dashboard       - Dashboard statistics");
-  console.log("  GET  /api/clients         - List all clients");
-  console.log("  GET  /api/packages        - List all packages");
-  console.log("  GET  /api/projects        - List all projects/bookings");
-  console.log("  GET  /api/payments        - List all payments");
-  console.log("  GET  /api/team            - List team members");
-  console.log("");
-});
+startServer();
