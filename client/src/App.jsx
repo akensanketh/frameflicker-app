@@ -4,6 +4,7 @@ import Layout from './components/MainLayout'; // We renamed this earlier
 import Dashboard from './pages/DashboardPage'; // <--- New Name
 import Packages from './pages/PackagesPage';   // <--- New Name
 import Clients from './pages/ClientsPage';     // <--- New Name
+import Projects from './pages/ProjectsPage';
 
 // Placeholder pages
 const Placeholder = ({ title }) => (
@@ -26,6 +27,7 @@ function App() {
           <Route path="/projects" element={<Placeholder title="Project Bookings" />} />
           <Route path="/payments" element={<Placeholder title="Payments & Invoices" />} />
           <Route path="/team" element={<Placeholder title="Team Members" />} />
+          <Route path="/projects" element={<Projects />} />
         </Routes>
       </Layout>
     </BrowserRouter>

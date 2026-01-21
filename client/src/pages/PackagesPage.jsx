@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Package, Trash2, Check } from 'lucide-react';
+import { Plus, Trash2, Check } from 'lucide-react';
 
 export default function PackagesPage() {
   const [packages, setPackages] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  
   const [formData, setFormData] = useState({
     name: '', category: 'Wedding', price: '', description: ''
   });
