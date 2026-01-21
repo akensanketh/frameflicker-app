@@ -1,12 +1,12 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Layout from './components/MainLayout'; // We renamed this earlier
-import Dashboard from './pages/DashboardPage'; // <--- New Name
-import Packages from './pages/PackagesPage';   // <--- New Name
-import Clients from './pages/ClientsPage';     // <--- New Name
-import Projects from './pages/ProjectsPage';
+import Layout from './components/MainLayout';
+import Dashboard from './pages/DashboardPage';
+import Packages from './pages/PackagesPage';
+import Clients from './pages/ClientsPage';
+import Projects from './pages/ProjectsPage'; // <--- Import the Projects Page
 
-// Placeholder pages
+// Placeholder for remaining pages
 const Placeholder = ({ title }) => (
   <div>
     <h2 className="text-2xl font-bold mb-4">{title}</h2>
@@ -24,10 +24,9 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/packages" element={<Packages />} />
-          <Route path="/projects" element={<Placeholder title="Project Bookings" />} />
+          <Route path="/projects" element={<Projects />} /> {/* <--- USE THE REAL PAGE HERE */}
           <Route path="/payments" element={<Placeholder title="Payments & Invoices" />} />
           <Route path="/team" element={<Placeholder title="Team Members" />} />
-          <Route path="/projects" element={<Projects />} />
         </Routes>
       </Layout>
     </BrowserRouter>
